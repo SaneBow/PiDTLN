@@ -32,7 +32,13 @@ This is based on the [DTLN-aec](https://github.com/breizhn/DTLN-aec) project. It
 
 ## Setup with Hardware Loopback
 
-1. Assume you have a sound card which supports hardware loopback, and the loopback is on the last channel of captured audio. In my case is the [Respeaker USB Mic Array V2.0](https://wiki.seeedstudio.com/ReSpeaker_Mic_Array_v2.0/).
-2. List devices with `python3 rt_dtln_ns.py -l`. Note down a unique substring of your soundcard's name. In my case it can be "UAC1.0".
-3. Test with `python3 rt_dtln_ns.py -i UAC1.0 -o UAC1.0 -c 6 -m models/dtln_aec_128_quant`. Speak to your mic, you should hear no feedback echo.
+You need to have a sound card which supports hardware loopback, and the loopback is on the last channel of captured audio. In my case is the [Respeaker USB Mic Array V2.0](https://wiki.seeedstudio.com/ReSpeaker_Mic_Array_v2.0/), which has 6 input channels and last one is playback.
+
+1. List devices with `python3 rt_dtln_ns.py -l`. Note down a unique substring of your soundcard's name. In my case it can be "UAC1.0".
+2. Test with `python3 rt_dtln_ns.py -i UAC1.0 -o UAC1.0 -c 6 -m models/dtln_aec_128_quant`. Speak to your mic, you should hear no feedback echo.
+3. Follow the similar procedure in DTLN NS setup to put AEC output to a virtual capturing device. So you can use it in other programs.
+
+## Setup without Hardware Loopback
+
+When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. Currently I am still trying to achieve this with `loopback_asound.conf`. With this, we can successfully record with playback channel. But somehow it failed to work with PyAudio, which the realtime script is based on.
 
