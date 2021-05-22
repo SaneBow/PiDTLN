@@ -1,5 +1,4 @@
 # PiDTLN
-Apply machine learning model DTLN for noise suppression and acoustic echo cancellation on Raspberry Pi
 
 The target of this project is to integrate and use two amazing pretrained models [DTLN](https://github.com/breizhn/DTLN) and [DTLN-aec](https://github.com/breizhn/DTLN-aec) on Raspberry Pi for realtime noise suppression (NS) and/or acoustic echo cancellation (AEC) tasks.
 
@@ -28,7 +27,7 @@ I add a few useful options in the `rt_dtln_ns.py` based on the orginal script. S
 This is based on the [DTLN-aec](https://github.com/breizhn/DTLN-aec) project. It currently only has a file-based demo script with tflite (not quantized) models. To make it realtime, I converted models to quantized models and created two realtime scripts:
 * `models/dtln_aec_???_quant*` are quantized models. `???` is the number of LSTM units, larger means slower but supposed to be better.
 * `rt_dtln_aec.py` is similar to `rt_dtln_ns.py`, which takes a pair of devices as input and output. It assumes the input device contains channel for loopback.
-* `rt_dtln_aec_parallel.py` is a multiprocessing version, it runs ~2x faster on slower models.
+* `rt_dtln_aec_mp.py` is a multiprocessing version, it runs close to 2x faster on slower models.
 
 ## Setup with Hardware Loopback
 
@@ -38,7 +37,6 @@ You need to have a sound card which supports hardware loopback, and the loopback
 2. Test with `python3 rt_dtln_ns.py -i UAC1.0 -o UAC1.0 -c 6 -m models/dtln_aec_128_quant`. Speak to your mic, you should hear no feedback echo.
 3. Follow the similar procedure in DTLN NS setup to put AEC output to a virtual capturing device. So you can use it in other programs.
 
-## Setup without Hardware Loopback
+## [WIP] Setup without Hardware Loopback
 
-When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. Currently I am still trying to achieve this with `loopback_asound.conf`. With this, we can successfully record with playback channel. But somehow it failed to work with PyAudio, which the realtime script is based on.
-
+When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. Currently I am still trying to make this happen with `loopback_asound.conf` on a [ReSpeaker 2-Mics Pi HAT](https://wiki.seeedstudio.com/ReSpeaker_2_Mics_Pi_HAT/). Current progress is that I can successfully record the virtual device that combines a playback channel, but somehow it failed to work with PyAudio, which the realtime script is based on.
