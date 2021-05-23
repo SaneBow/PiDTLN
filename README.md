@@ -10,13 +10,13 @@ I add a few useful options in the `rt_dtln_ns.py` based on the orginal script. S
 
 ## Setup
 
-1. Configure Loopback and Test DTLN
+### Configure Loopback and Test DTLN
   * Enable `snd-aloop` with `sudo modprobe snd_aloop`. You may want to add a line `snd-aloop` in `/etc/modules` to automatically enable it on boot.
   * Now check `arecord -l`, you should able to see two new Loopback devices.
   * Run DTLN with `python3 rt_dtln_ns.py -o 'Loopback 0' --measure`, you should see processing times < 6ms. If your processing time is longer you may need a more powerful device. If you see a lot of "input underflow" try to adjust the latency for a higher value, e.g., `--latency 0.5`.
   * Run `arecord -D hw:Loopback,1 rec.wav` in a separate shell to record denoised audio. Then listen to it or open with Audacity. You should noice obvious noise removal and clear voice.
 
-2. Setup DTLN as a Service
+### Setup DTLN as a Service
   * Add the below entry to `/etc/asound.conf`. Which adds a virtual mic with DTLN output and set it as the default capturing device system wide.
   * Add the `dtln_ns.service` to `/etc/systemd/user/` and enable it with `systemctl --global enable dtln_ns`
   * Reboot and record some audio to see if DTLN NS is taking effect.
@@ -37,6 +37,11 @@ You need to have a sound card which supports hardware loopback, and the loopback
 2. Test with `python3 rt_dtln_ns.py -i UAC1.0 -o UAC1.0 -c 6 -m models/dtln_aec_128_quant`. Speak to your mic, you should hear no feedback echo.
 3. Follow the similar procedure in DTLN NS setup to put AEC output to a virtual capturing device. So you can use it in other programs.
 
-## [WIP] Setup without Hardware Loopback
+## Setup without Hardware Loopback
 
-When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. Currently I am still trying to make this happen with `loopback_asound.conf` on a [ReSpeaker 2-Mics Pi HAT](https://wiki.seeedstudio.com/ReSpeaker_2_Mics_Pi_HAT/). Current progress is that I can successfully record the virtual device that combines a playback channel, but somehow it failed to work with PyAudio, which the realtime script is based on.
+When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. I made a [ALSA AEC plugin](configs/aec_asound.conf) that can achieve this. Copy the file to `/etc/alsa/alsa.conf/50-aec.conf`. Then you will have two additional alsa interfaces: `aec` and `aec_internal`. To use them, simply do:
+1. Play some music to AEC virtual device: `aplay -D aec:cardname music.wav`
+2. Run AEC script with: `python3 rt_dtln_aec.py -m 128 -i aec_internal:cardname -o aec_internal:cardname`.
+3. Record from AEC virtual device: `arecord -D aec:cardname -f S16_LE -r 16000 -c 1 -V mono rec.wav`
+
+Now look at recorded audio file, music should be removed. The effect is not always good in my tests, possibly due to small model unit (128). You may try the same with `rt_dtln_aec_mp.py -m 256`. 

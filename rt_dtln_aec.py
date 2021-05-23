@@ -1,36 +1,35 @@
 # -*- coding: utf-8 -*-
 """
-Script to process a folder of .wav files with a trained DTLN-aec model. 
-This script supports subfolders and names the processed files the same as the 
-original. The model expects 16kHz single channel audio .wav files.
-The idea of this script is to use it for baseline or comparison purpose.
+Script to process realtime audio with a trained DTLN-aec model (multiprocessing version). 
+This script directly interacts with audio devices. It expects 16kHz audio input/output. 
+Input device should contain a loopback channel as its last channel, and it assume raw mic input is in the first channel.
 
 Example call:
-    $python run_aec.py -i /name/of/input/folder  \
-                              -o /name/of/output/folder \
-                              -m /name/of/the/model
+    $python rt_dtln_aec.py -i capture  -o playback -m /name/of/the/model
 
-Author: Nils L. Westhausen (nils.westhausen@uol.de)
-Version: 27.10.2020
+Author: sanebow (sanebow@gmail.com)
+Version: 23.05.2021
 
 This code is licensed under the terms of the MIT-license.
 """
 
-import soundfile as sf
 import sounddevice as sd
 import numpy as np
 import os
-import time as otime
+import time
+import threading
 import argparse
-# import tensorflow.lite as tflite
 import tflite_runtime.interpreter as tflite
 import collections
+import daemon
 
 
-# make GPUs invisible
-os.environ["CUDA_VISIBLE_DEVICES"] = ""
-
-
+def int_or_str(text):
+    """Helper function for argument parsing."""
+    try:
+        return int(text)
+    except ValueError:
+        return text
 
 # set block len and block shift
 block_len = 512
@@ -41,20 +40,33 @@ in_buffer_lpb = np.zeros((block_len)).astype("float32")
 
 out_buffer = np.zeros((block_len)).astype('float32')# create buffer
 
-# arguement parser for running directly from the command line
-parser = argparse.ArgumentParser(description="data evaluation")
-parser.add_argument("--input_device", "-i", help="input device (mic+playback)")
-parser.add_argument("--output_device", "-o", help="output device (speaker)")
-parser.add_argument("--model", "-m", help="name of tf-lite model")
-parser.add_argument("--latency", "-l", type=float, default=0, help="latency of sound device")
-parser.add_argument("--threads", "-t", type=int, default=1, help="set thread number for interpreters")
+parser = argparse.ArgumentParser(add_help=False)
+parser.add_argument( '-l', '--list-devices', action='store_true',
+    help='show list of audio devices and exit')
+args, remaining = parser.parse_known_args()
+if args.list_devices:
+    print(sd.query_devices())
+    parser.exit(0)
+parser = argparse.ArgumentParser(
+    description=__doc__,
+    formatter_class=argparse.RawDescriptionHelpFormatter,
+    parents=[parser])
+parser.add_argument("--input_device", "-i", type=int_or_str, help="input device (numeric ID or substring)")
+parser.add_argument("--output_device", "-o", type=int_or_str, help="output device (numeric ID or substring)")
+parser.add_argument("--model", "-m", choices=['128', '256', '512'], default='128', help="number of LSTM units for tf-lite model (one of 128, 256, 512)")
 parser.add_argument("--channels", "-c", type=int, default=2, help="number of input channels")
-parser.add_argument('-n', '--no-aec', action='store_true', help='turn off AEC, pass-through')
-args = parser.parse_args()
+parser.add_argument('--no-aec', '-n',  action='store_true', help='turn off AEC, pass-through')
+parser.add_argument("--latency", type=float, default=0.2, help="latency of sound device")
+parser.add_argument("--threads", type=int, default=1, help="set thread number for interpreters")
+parser.add_argument('--measure', action='store_true', help='measure and report processing time')
+parser.add_argument('-D', '--daemonize', action='store_true',help='run as a daemon')
+args = parser.parse_args(remaining)
 
-interpreter_1 = tflite.Interpreter(model_path=args.model + "_1.tflite", num_threads=args.threads)
+interpreter_1 = tflite.Interpreter(
+    model_path="models/dtln_aec_{}_quant_1.tflite".format(args.model), num_threads=args.threads)
 interpreter_1.allocate_tensors()
-interpreter_2 = tflite.Interpreter(model_path=args.model + "_2.tflite", num_threads=args.threads)
+interpreter_2 = tflite.Interpreter(
+    model_path="models/dtln_aec_{}_quant_2.tflite".format(args.model), num_threads=args.threads)
 interpreter_2.allocate_tensors()
 input_details_1 = interpreter_1.get_input_details()
 input_details_2 = interpreter_2.get_input_details()
@@ -71,14 +83,19 @@ states_2 = np.zeros(input_details_2[states_idx]["shape"]).astype("float32")
 
 t_ring = collections.deque(maxlen=100)
 
-def callback(indata, outdata, frames, time, status):
+def callback(indata, outdata, frames, buftime, status):
     global in_buffer, out_buffer, in_buffer_lpb, states_1, states_2, t_ring
+    if args.measure:
+        start_time = time.time()
+
     if status:
         print(status)
+
     if args.no_aec:
         outdata[:, 0] = indata[:, 0]
+        if args.measure:
+            t_ring.append(time.time() - start_time)
         return
-    start_time = otime.time()
 
     # write mic stream to buffer
     in_buffer[:-block_shift] = in_buffer[block_shift:]
@@ -131,23 +148,35 @@ def callback(indata, outdata, frames, time, status):
     # output to soundcard
     outdata[:] = np.expand_dims(out_buffer[:block_shift], axis=-1)
 
-    t_ring.append((otime.time() - start_time) * 1000)
+    if args.measure:
+        dt = time.time() - start_time
+        t_ring.append(dt)
+        if dt > 7e-3:
+            print("[warning] process time: {:.2f} ms".format(dt * 1000))
 
-try:
-    if args.no_aec:
-        print("Pass-through mode ...")
+
+def open_stream():
     with sd.Stream(device=(args.input_device, args.output_device),
                 samplerate=16000, blocksize=block_shift,
                 dtype=np.float32, latency=args.latency,
                 channels=(args.channels, 1), callback=callback):
         print('#' * 80)
-        print('press Return to quit')
+        print('Ctrl-C to exit')
         print('#' * 80)
-        while True:
-            otime.sleep(3)
-            print('Processing time:', np.average(list(t_ring)))
+        if args.measure:
+            while True:
+                time.sleep(1)
+                print('Processing time: {:.2f} ms'.format( 1000 * np.average(t_ring) ), end='\r')
+        else:
+            threading.Event().wait()
+
+try:
+    if args.daemonize:
+        with daemon.DaemonContext():
+            open_stream()
+    else:
+        open_stream()
 except KeyboardInterrupt:
-    print("Keyboard interrupt, terminating ...")
+    parser.exit('')
 except Exception as e:
-    raise
-    
+    parser.exit(type(e).__name__ + ': ' + str(e))

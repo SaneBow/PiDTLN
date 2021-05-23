@@ -1,0 +1,3 @@
+tflite_runtime
+sounddevice
+python-daemon

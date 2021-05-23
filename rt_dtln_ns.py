@@ -1,26 +1,14 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-This is a real time example how to implement DTLN tf light model with 
-sounddevice. The script is based on the "wire.py" example of the sounddevice 
-toolbox. If the command line shows "input underflow", restart the script.
-If there are still a lot of dropouts, increase the latency.
+Script to process realtime audio with a trained DTLN model. 
+This script supports ALSA audio devices. The model expects 16kHz single channel audio input/output.
 
-First call:
-    
-    $ python real_time_dtln_audio.py --list-devices
+Example call:
+    $python rt_dtln_ns.py -i capture -o playback
 
-to get your audio devices. In the next step call
-
-    $ python real_time_dtln_audio.py -i in_device_idx -o out_device_idx
-
-For .whl files of the tf light runtime go to: 
-    https://www.tensorflow.org/lite/guide/python
-    
-    
-
-Author: Nils L. Westhausen (nils.westhausen@uol.de)
-Version: 01.07.2020
+Author: sanebow (sanebow@gmail.com)
+Version: 23.05.2021
 
 This code is licensed under the terms of the MIT-license.
 """
@@ -72,7 +60,7 @@ parser.add_argument(
     '-t', '--threads', type=int, default=1,
     help='number of threads for tflite interpreters')
 parser.add_argument(
-    '--latency', type=int_or_str, default='low',
+    '--latency', type=float, default=0.2,
     help='suggested input/output latency in seconds')
 parser.add_argument(
     '-D', '--daemonize', action='store_true',
@@ -88,9 +76,9 @@ block_len_ms = 32
 block_shift_ms = 8
 fs_target = 16000
 # create the interpreters
-interpreter_1 = tflite.Interpreter(model_path='./pretrained_model/model_quant_1.tflite', num_threads=args.threads)
+interpreter_1 = tflite.Interpreter(model_path='./models/model_quant_1.tflite', num_threads=args.threads)
 interpreter_1.allocate_tensors()
-interpreter_2 = tflite.Interpreter(model_path='./pretrained_model/model_quant_2.tflite', num_threads=args.threads)
+interpreter_2 = tflite.Interpreter(model_path='./models/model_quant_2.tflite', num_threads=args.threads)
 interpreter_2.allocate_tensors()
 # Get input and output tensors.
 input_details_1 = interpreter_1.get_input_details()
@@ -173,7 +161,7 @@ def open_stream():
         print('#' * 80)
         if args.measure:
             while True:
-                time.sleep(3)
+                time.sleep(1)
                 print('Processing time: {:.2f} ms'.format( 1000 * np.average(t_ring) ), end='\r')
         else:
             threading.Event().wait()
