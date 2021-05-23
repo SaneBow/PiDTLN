@@ -44,3 +44,9 @@ When you don't have a soundcard that supports hardware loopback, you need to cre
 3. Record from AEC virtual device: `arecord -D aec:cardname -f S16_LE -r 16000 -c 1 -V mono rec.wav`
 
 Now look at recorded audio file, music should be removed. The effect is not always good in my tests, possibly due to small model unit (128). You may try the same with `rt_dtln_aec_mp.py -m 256`. 
+
+
+## Acknowledgement
+* This project is heavily based on the [DTLN](https://github.com/breizhn/DTLN) and [DTLN-aec](https://github.com/breizhn/DTLN-aec) projects by [breizhn](https://github.com/breizhn).
+* Thanks [StuartIanNaylor](https://github.com/StuartIanNaylor) for the discussion and help on various topics ranging from the idea of multiprocessing and trouble shooting alsa configs.
+* Kudos to the cool tool [tflite2tensorflow](https://github.com/PINTO0309/tflite2tensorflow/) made by [PINTO0309](https://github.com/PINTO0309). I used it to convert DTLN-aec tflite models to quantized version.
