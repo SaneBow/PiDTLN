@@ -1,0 +1,10 @@
+[Unit]
+Description=DTLN Noise Suppression Service
+After=pulseaudio.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/rt_dtln_ns -o 'Loopback 0' -D
+
+[Install]
+WantedBy=default.targe

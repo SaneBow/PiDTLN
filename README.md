@@ -14,12 +14,11 @@ I add a few useful options in the `rt_dtln_ns.py` based on the orginal script. S
   * Enable `snd-aloop` with `sudo modprobe snd_aloop`. You may want to add a line `snd-aloop` in `/etc/modules` to automatically enable it on boot.
   * Now check `arecord -l`, you should able to see two new Loopback devices.
   * Run DTLN with `python3 rt_dtln_ns.py -o 'Loopback 0' --measure`, you should see processing times < 6ms. If your processing time is longer you may need a more powerful device. If you see a lot of "input underflow" try to adjust the latency for a higher value, e.g., `--latency 0.5`.
-  * Run `arecord -D hw:Loopback,1 rec.wav` in a separate shell to record denoised audio. Then listen to it or open with Audacity. You should noice obvious noise removal and clear voice.
+  * Run `arecord -D hw:Loopback,1 -f float_le -r 16000 -c 1 -V mono rec.wav` in a separate shell to record denoised audio. Then listen to it or open with Audacity. You should noice obvious noise removal and clear voice.
 
 ### Setup DTLN as a Service
-  * Add the below entry to `/etc/asound.conf`. Which adds a virtual mic with DTLN output and set it as the default capturing device system wide.
   * Add the `dtln_ns.service` to `/etc/systemd/user/` and enable it with `systemctl --global enable dtln_ns`
-  * Reboot and record some audio to see if DTLN NS is taking effect.
+  * Reboot and record some audio from `hw:Loopback,1` to see if DTLN NS is running and taking effect.
 
 
 # Acoustic Echo Cancellation
