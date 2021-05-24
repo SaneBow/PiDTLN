@@ -79,15 +79,15 @@ interpreter_2.allocate_tensors()
 input_details_1 = interpreter_1.get_input_details()
 input_details_2 = interpreter_2.get_input_details()
 in_idx = next(i for i in input_details_1 if i["name"] == "input_3")["index"]
-lpb_idx = next(i for i in input_details_1 if i["name"] == "input_4")["index"]
-states_idx = next(i for i in input_details_1 if i["name"] == "input_5")["index"]
+lpb1_idx = next(i for i in input_details_1 if i["name"] == "input_4")["index"]
+states1_idx = next(i for i in input_details_1 if i["name"] == "input_5")["index"]
 est_idx = next(i for i in input_details_2 if i["name"] == "input_6")["index"]
-lpb_idx = next(i for i in input_details_2 if i["name"] == "input_7")["index"]
-states_idx = next(i for i in input_details_2 if i["name"] == "input_8")["index"]
+lpb2_idx = next(i for i in input_details_2 if i["name"] == "input_7")["index"]
+states2_idx = next(i for i in input_details_2 if i["name"] == "input_8")["index"]
 output_details_1 = interpreter_1.get_output_details()
 output_details_2 = interpreter_2.get_output_details()
-states_1 = np.zeros(input_details_1[states_idx]["shape"]).astype("float32")
-states_2 = np.zeros(input_details_2[states_idx]["shape"]).astype("float32")
+states_1 = np.zeros(input_details_1[states1_idx]["shape"]).astype("float32")
+states_2 = np.zeros(input_details_2[states2_idx]["shape"]).astype("float32")
 
 if args.no_fftw:
     g_use_fftw = False
@@ -140,8 +140,8 @@ def callback(indata, outdata, frames, buftime, status):
     lpb_mag = np.reshape(lpb_mag, (1, 1, -1)).astype("float32")
     # set tensors to the first model
     interpreter_1.set_tensor(input_details_1[in_idx]["index"], in_mag)
-    interpreter_1.set_tensor(input_details_1[lpb_idx]["index"], lpb_mag)
-    interpreter_1.set_tensor(input_details_1[states_idx]["index"], states_1)
+    interpreter_1.set_tensor(input_details_1[lpb1_idx]["index"], lpb_mag)
+    interpreter_1.set_tensor(input_details_1[states1_idx]["index"], states_1)
     # run calculation
     interpreter_1.invoke()
     # # get the output of the first block
@@ -159,9 +159,9 @@ def callback(indata, outdata, frames, buftime, status):
     in_lpb = np.reshape(in_buffer_lpb, (1, 1, -1)).astype("float32")
 
     # set tensors to the second block
-    interpreter_2.set_tensor(input_details_2[states_idx]["index"], states_2)
+    interpreter_2.set_tensor(input_details_2[lpb2_idx]["index"], in_lpb)
     interpreter_2.set_tensor(input_details_2[est_idx]["index"], estimated_block)
-    interpreter_2.set_tensor(input_details_2[lpb_idx]["index"], in_lpb)
+    interpreter_2.set_tensor(input_details_2[states2_idx]["index"], states_2)
     # run calculation
     interpreter_2.invoke()
     # get output tensors
