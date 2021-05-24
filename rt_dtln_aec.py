@@ -23,6 +23,13 @@ import tflite_runtime.interpreter as tflite
 import collections
 import daemon
 
+g_use_fftw = True
+try:
+    import pyfftw
+except ImportError:
+    print("[WARNING] pyfftw is not installed, use np.fft")
+    g_use_fftw = False
+
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -59,6 +66,7 @@ parser.add_argument('--no-aec', '-n',  action='store_true', help='turn off AEC, 
 parser.add_argument("--latency", type=float, default=0.2, help="latency of sound device")
 parser.add_argument("--threads", type=int, default=1, help="set thread number for interpreters")
 parser.add_argument('--measure', action='store_true', help='measure and report processing time')
+parser.add_argument('--no-fftw', action='store_true', help='use np.fft instead of fftw')
 parser.add_argument('-D', '--daemonize', action='store_true',help='run as a daemon')
 args = parser.parse_args(remaining)
 
@@ -81,10 +89,18 @@ output_details_2 = interpreter_2.get_output_details()
 states_1 = np.zeros(input_details_1[states_idx]["shape"]).astype("float32")
 states_2 = np.zeros(input_details_2[states_idx]["shape"]).astype("float32")
 
+if args.no_fftw:
+    g_use_fftw = False
+if g_use_fftw:
+    fft_buf = pyfftw.empty_aligned(512, dtype='float32')
+    rfft = pyfftw.builders.rfft(fft_buf)
+    ifft_buf = pyfftw.empty_aligned(257, dtype='complex64')
+    irfft = pyfftw.builders.irfft(ifft_buf)
+
 t_ring = collections.deque(maxlen=100)
 
 def callback(indata, outdata, frames, buftime, status):
-    global in_buffer, out_buffer, in_buffer_lpb, states_1, states_2, t_ring
+    global in_buffer, out_buffer, in_buffer_lpb, states_1, states_2, t_ring , g_use_fftw
     if args.measure:
         start_time = time.time()
 
@@ -105,13 +121,21 @@ def callback(indata, outdata, frames, buftime, status):
     in_buffer_lpb[-block_shift:] = np.squeeze(indata[:, -1])
 
     # calculate fft of input block
-    in_block_fft = np.fft.rfft(np.squeeze(in_buffer)).astype("complex64")
+    if g_use_fftw:
+        fft_buf[:] = in_buffer
+        in_block_fft = rfft()
+    else:
+        in_block_fft = np.fft.rfft(in_buffer).astype("complex64")
 
     # create magnitude
     in_mag = np.abs(in_block_fft)
     in_mag = np.reshape(in_mag, (1, 1, -1)).astype("float32")
     # calculate log pow of lpb
-    lpb_block_fft = np.fft.rfft(np.squeeze(in_buffer_lpb)).astype("complex64")
+    if g_use_fftw:
+        fft_buf[:] = in_buffer_lpb
+        lpb_block_fft = rfft()
+    else:
+        lpb_block_fft = np.fft.rfft(in_buffer_lpb).astype("complex64")
     lpb_mag = np.abs(lpb_block_fft)
     lpb_mag = np.reshape(lpb_mag, (1, 1, -1)).astype("float32")
     # set tensors to the first model
@@ -125,7 +149,11 @@ def callback(indata, outdata, frames, buftime, status):
     states_1 = interpreter_1.get_tensor(output_details_1[1]["index"])
 
     # apply mask and calculate the ifft
-    estimated_block = np.fft.irfft(in_block_fft * out_mask)
+    if g_use_fftw:
+        ifft_buf[:] = in_block_fft * out_mask
+        estimated_block = irfft()
+    else:
+        estimated_block = np.fft.irfft(in_block_fft * out_mask)
     # reshape the time domain frames
     estimated_block = np.reshape(estimated_block, (1, 1, -1)).astype("float32")
     in_lpb = np.reshape(in_buffer_lpb, (1, 1, -1)).astype("float32")
@@ -152,7 +180,7 @@ def callback(indata, outdata, frames, buftime, status):
         dt = time.time() - start_time
         t_ring.append(dt)
         if dt > 7e-3:
-            print("[warning] process time: {:.2f} ms".format(dt * 1000))
+            print("[!] process time: {:.2f} ms".format(dt * 1000))
 
 
 def open_stream():

@@ -23,6 +23,14 @@ import time
 import daemon
 import threading
 
+g_use_fftw = True
+
+try:
+    import pyfftw
+except ImportError:
+    print("[WARNING] pyfftw is not installed, use np.fft")
+    g_use_fftw = False
+
 
 def int_or_str(text):
     """Helper function for argument parsing."""
@@ -68,6 +76,10 @@ parser.add_argument(
 parser.add_argument(
     '--measure', action='store_true',
     help='measure and report processing time')
+parser.add_argument(
+    '--no-fftw', action='store_true',
+    help='use np.fft instead of fftw')
+
 
 args = parser.parse_args(remaining)
 
@@ -76,9 +88,9 @@ block_len_ms = 32
 block_shift_ms = 8
 fs_target = 16000
 # create the interpreters
-interpreter_1 = tflite.Interpreter(model_path='./models/model_quant_1.tflite', num_threads=args.threads)
+interpreter_1 = tflite.Interpreter(model_path='./models/dtln_ns_quant_1.tflite', num_threads=args.threads)
 interpreter_1.allocate_tensors()
-interpreter_2 = tflite.Interpreter(model_path='./models/model_quant_2.tflite', num_threads=args.threads)
+interpreter_2 = tflite.Interpreter(model_path='./models/dtln_ns_quant_2.tflite', num_threads=args.threads)
 interpreter_2.allocate_tensors()
 # Get input and output tensors.
 input_details_1 = interpreter_1.get_input_details()
@@ -95,11 +107,19 @@ block_len = int(np.round(fs_target * (block_len_ms / 1000)))
 in_buffer = np.zeros((block_len)).astype('float32')
 out_buffer = np.zeros((block_len)).astype('float32')
 
+if args.no_fftw:
+    g_use_fftw = False
+if g_use_fftw:
+    fft_buf = pyfftw.empty_aligned(512, dtype='float32')
+    rfft = pyfftw.builders.rfft(fft_buf)
+    ifft_buf = pyfftw.empty_aligned(257, dtype='complex64')
+    irfft = pyfftw.builders.irfft(ifft_buf)
+
 t_ring = collections.deque(maxlen=100)
 
 def callback(indata, outdata, frames, buf_time, status):
     # buffer and states to global
-    global in_buffer, out_buffer, states_1, states_2, t_ring
+    global in_buffer, out_buffer, states_1, states_2, t_ring, g_use_fftw
     if args.measure:
         start_time = time.time()
     if status:
@@ -115,7 +135,11 @@ def callback(indata, outdata, frames, buf_time, status):
     in_buffer[:-block_shift] = in_buffer[block_shift:]
     in_buffer[-block_shift:] = np.squeeze(indata)
     # calculate fft of input block
-    in_block_fft = np.fft.rfft(in_buffer)
+    if g_use_fftw:
+        fft_buf[:] = in_buffer
+        in_block_fft = rfft()
+    else:
+        in_block_fft = np.fft.rfft(in_buffer)
     in_mag = np.abs(in_block_fft)
     in_phase = np.angle(in_block_fft)
     # reshape magnitude to input dimensions
@@ -130,7 +154,11 @@ def callback(indata, outdata, frames, buf_time, status):
     states_1 = interpreter_1.get_tensor(output_details_1[1]['index'])   
     # calculate the ifft
     estimated_complex = in_mag * out_mask * np.exp(1j * in_phase)
-    estimated_block = np.fft.irfft(estimated_complex)
+    if g_use_fftw:
+        ifft_buf[:] = estimated_complex
+        estimated_block = irfft()
+    else:
+        estimated_block = np.fft.irfft(estimated_complex)
     # reshape the time domain block
     estimated_block = np.reshape(estimated_block, (1,1,-1)).astype('float32')
     # set tensors to the second block
