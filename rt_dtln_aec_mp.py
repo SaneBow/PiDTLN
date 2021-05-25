@@ -173,7 +173,7 @@ def callback(indata, outdata, frames, buftime, status):
     if args.measure:
         dt = time.time() - start_time
         t_ring.append(dt)
-        if dt > 7e-3:
+        if dt > 8e-3:
             print("[warning] process time: {:.2f} ms".format(dt * 1000))
 
 def stage2(interpreter_2, _qi, _qo):
