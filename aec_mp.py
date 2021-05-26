@@ -111,8 +111,7 @@ est_block, _shm2 = fetch_shm_ndarray('est_block', (1, 1, block_len), init=True)
 out_block, _shm3 = fetch_shm_ndarray('out_block', (block_len), init=True)
 shms = [_shm1, _shm2, _shm3]
 
-q1 = Queue(maxsize=1)
-q2 = Queue(maxsize=1)
+q = Queue(maxsize=1)
 
 if g_use_fftw:
     fft_buf = pyfftw.empty_aligned(512, dtype='float32')
@@ -141,8 +140,6 @@ def callback(indata, outdata, frames, buftime, status):
         if args.measure:
             t_ring.append(time.time() - start_time)
         return
-
-    q1.put(1)   # wait stage2 read in_buffer
 
     # write mic stream to buffer
     in_buffer[:-block_shift] = in_buffer[block_shift:]
@@ -191,7 +188,7 @@ def callback(indata, outdata, frames, buftime, status):
     in_lpb[:] = np.reshape(in_buffer_lpb, (1, 1, -1)).astype("float32")
     est_block[:] = np.reshape(estimated_block, (1, 1, -1)).astype("float32")
 
-    q2.get()    # stage2 can continue
+    q.get()    # get stage2 output
 
     # shift values and write to buffer
     # write to buffer
@@ -212,7 +209,7 @@ def callback(indata, outdata, frames, buftime, status):
         out_wav.write(outdata)
 
 
-def stage2(interpreter_2, q1, q2):
+def stage2(interpreter_2, q):
     input_details_2 = interpreter_2.get_input_details()
     est_idx = next(i for i in input_details_2 if i["name"] == "input_6")["index"]
     lpb_idx = next(i for i in input_details_2 if i["name"] == "input_7")["index"]
@@ -225,23 +222,22 @@ def stage2(interpreter_2, q1, q2):
     est_block, _shm2 = fetch_shm_ndarray('est_block', (1, 1, block_len))
     out_block, _shm3 = fetch_shm_ndarray('out_block', (block_len))
 
-    q2.put(0)   # ready, block for q1 to run first
+    q.put(0)    # tell another process am ready
+    q.put(0)    # let stage1 go first 
 
     while True:
-        q2.put(2)   # wait stage1 calculate est_block
-
         # set tensors to the second block
         interpreter_2.set_tensor(input_details_2[lpb_idx]["index"], in_lpb)
         interpreter_2.set_tensor(input_details_2[est_idx]["index"], est_block)
         interpreter_2.set_tensor(input_details_2[states_idx]["index"], states_2)
-
-        q1.get()    # stage1 can continue
 
         # run calculation
         interpreter_2.invoke()
         # get output tensors
         out_block[:] = interpreter_2.get_tensor(output_details_2[0]["index"])
         states_2 = interpreter_2.get_tensor(output_details_2[1]["index"])
+
+        q.put(1)    # output ready
 
 
 def open_stream():
@@ -263,8 +259,9 @@ def open_stream():
 
 
 try:
-    p2 = Process(target=stage2, args=(interpreter_2, q1, q2))
+    p2 = Process(target=stage2, args=(interpreter_2, q))
     p2.start()
+    q.get() # wait till stage2 process ready
     if args.daemonize:
         with daemon.DaemonContext():
             open_stream()
