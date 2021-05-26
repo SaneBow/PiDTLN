@@ -56,8 +56,8 @@ This table is the evaluation of processing time on my Raspberry Pi 3B+ with 64bi
 
 | Model | `ns.py` | `aec.py` | `aec_mp.py` |
 | ----- | ------- | -------- | ----------- |
-| 128   | N/A     | 4.43 ms  | 3.49 ms     |
-| 256   | N/A     | 6.36 ms  | 4.70 ms     |
+| 128   | N/A     | 4.43 ms  | 2.52 ms     |
+| 256   | N/A     | 6.36 ms  | 3.76 ms     |
 | 512   | 2.56 ms | 12.35 ms | 8.48 ms     |
 
 In my experience, it's better to use models < 5ms, otherwise you may see some "output underflow" messages (sometimes increase `--latency` may help).
