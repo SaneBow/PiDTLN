@@ -13,10 +13,8 @@ Version: 23.05.2021
 This code is licensed under the terms of the MIT-license.
 """
 
-import soundfile as sf
 import sounddevice as sd
 import numpy as np
-import os
 import time
 import argparse
 import tflite_runtime.interpreter as tflite
@@ -24,6 +22,15 @@ from multiprocessing import Process, Queue
 import threading
 import collections
 import daemon
+import sys
+try:
+    from multiprocessing import shared_memory
+except ImportError:
+    try:
+        import shared_memory
+    except ImportError:
+        print("[ERROR] please install shared-memory38 on Python < 3.8")
+        exit(1)
 
 g_use_fftw = True
 try:
@@ -40,14 +47,16 @@ def int_or_str(text):
     except ValueError:
         return text
 
-# set block len and block shift
-block_len = 512
-block_shift = 128
-
-in_buffer = np.zeros((block_len)).astype("float32")
-in_buffer_lpb = np.zeros((block_len)).astype("float32")
-
-out_buffer = np.zeros((block_len)).astype('float32')# create buffer
+def fetch_shm_ndarray(name, shape, dtype='float32', init=False):
+    buf = np.zeros(shape).astype(dtype)
+    if init:
+        shm = shared_memory.SharedMemory(name=name, create=True, size=buf.nbytes)
+    else:
+        shm = shared_memory.SharedMemory(name=name)
+    arr = np.ndarray(buf.shape, dtype=buf.dtype, buffer=shm.buf)
+    if init:
+        arr[:] = buf[:]
+    return arr, shm
 
 parser = argparse.ArgumentParser(add_help=False)
 parser.add_argument('-l', '--list-devices', action='store_true',
@@ -72,6 +81,10 @@ parser.add_argument('--no-fftw', action='store_true', help='use np.fft instead o
 parser.add_argument('-D', '--daemonize', action='store_true',help='run as a daemon')
 args = parser.parse_args(remaining)
 
+# set block len and block shift
+block_len = 512
+block_shift = 128
+
 interpreter_1 = tflite.Interpreter(
     model_path="models/dtln_aec_{}_quant_1.tflite".format(args.model), num_threads=args.threads)
 interpreter_1.allocate_tensors()
@@ -79,6 +92,7 @@ input_details_1 = interpreter_1.get_input_details()
 in_idx = next(i for i in input_details_1 if i["name"] == "input_3")["index"]
 lpb_idx = next(i for i in input_details_1 if i["name"] == "input_4")["index"]
 states_idx = next(i for i in input_details_1 if i["name"] == "input_5")["index"]
+
 output_details_1 = interpreter_1.get_output_details()
 states_1 = np.zeros(input_details_1[states_idx]["shape"]).astype("float32")
 
@@ -86,19 +100,28 @@ interpreter_2 = tflite.Interpreter(
     model_path="models/dtln_aec_{}_quant_2.tflite".format(args.model), num_threads=args.threads)
 interpreter_2.allocate_tensors()
 
+in_buffer = np.zeros((block_len)).astype("float32")
+in_buffer_lpb = np.zeros((block_len)).astype("float32")
+out_buffer = np.zeros((block_len)).astype('float32')
+
+in_lpb, _shm1 = fetch_shm_ndarray('in_lpb', (1, 1, block_len), init=True)
+est_block, _shm2 = fetch_shm_ndarray('est_block', (1, 1, block_len), init=True)
+out_block, _shm3 = fetch_shm_ndarray('out_block', (block_len), init=True)
+shms = [_shm1, _shm2, _shm3]
+
 q1 = Queue(maxsize=1)
 q2 = Queue(maxsize=1)
 
-if args.no_fftw:
-    g_use_fftw = False
 if g_use_fftw:
     fft_buf = pyfftw.empty_aligned(512, dtype='float32')
     rfft = pyfftw.builders.rfft(fft_buf)
     ifft_buf = pyfftw.empty_aligned(257, dtype='complex64')
     irfft = pyfftw.builders.irfft(ifft_buf)
 
-t_ring = collections.deque(maxlen=100)
 
+t_ring = collections.deque(maxlen=512)
+
+# =========== stage 1 =============
 def callback(indata, outdata, frames, buftime, status):
     global in_buffer, out_buffer, in_buffer_lpb, states_1, g_use_fftw
     if args.measure:
@@ -108,10 +131,13 @@ def callback(indata, outdata, frames, buftime, status):
         print(status)
 
     if args.no_aec:
+        # time.sleep(max(0, np.random.normal(loc=6.0, scale=1.0)*1e-3))
         outdata[:, 0] = indata[:, 0]
         if args.measure:
             t_ring.append(time.time() - start_time)
         return
+
+    q1.put(1)   # wait stage2 read in_buffer
 
     # write mic stream to buffer
     in_buffer[:-block_shift] = in_buffer[block_shift:]
@@ -120,23 +146,25 @@ def callback(indata, outdata, frames, buftime, status):
     in_buffer_lpb[:-block_shift] = in_buffer_lpb[block_shift:]
     in_buffer_lpb[-block_shift:] = np.squeeze(indata[:, -1])
 
-    ## stage 1
     # calculate fft of input block
     if g_use_fftw:
         fft_buf[:] = in_buffer
-        in_block_fft = rfft()
+        in_block_fft = rfft().astype("complex64") 
     else:
-        in_block_fft = np.fft.rfft(in_buffer).astype("complex64")    # create magnitude
+        in_block_fft = np.fft.rfft(in_buffer).astype("complex64")    
+    # create magnitude
     in_mag = np.abs(in_block_fft)
     in_mag = np.reshape(in_mag, (1, 1, -1)).astype("float32")
+
     # calculate log pow of lpb
     if g_use_fftw:
         fft_buf[:] = in_buffer_lpb
-        lpb_block_fft = rfft()
+        lpb_block_fft = rfft().astype("complex64")
     else:
         lpb_block_fft = np.fft.rfft(in_buffer_lpb).astype("complex64")
     lpb_mag = np.abs(lpb_block_fft)
     lpb_mag = np.reshape(lpb_mag, (1, 1, -1)).astype("float32")
+
     # set tensors to the first model
     interpreter_1.set_tensor(input_details_1[in_idx]["index"], in_mag)
     interpreter_1.set_tensor(input_details_1[lpb_idx]["index"], lpb_mag)
@@ -152,16 +180,14 @@ def callback(indata, outdata, frames, buftime, status):
         ifft_buf[:] = in_block_fft * out_mask
         estimated_block = irfft()
     else:
-        estimated_block = np.fft.irfft(in_block_fft * out_mask)    
+        estimated_block = np.fft.irfft(in_block_fft * out_mask)
+
     # reshape the time domain frames
-    estimated_block = np.reshape(estimated_block, (1, 1, -1)).astype("float32")
-    in_lpb = np.reshape(in_buffer_lpb, (1, 1, -1)).astype("float32")
+    in_lpb[:] = np.reshape(in_buffer_lpb, (1, 1, -1)).astype("float32")
+    est_block[:] = np.reshape(estimated_block, (1, 1, -1)).astype("float32")
 
-    q1.put((estimated_block, in_lpb))
+    q2.get()    # stage2 can continue
 
-    out_block = q2.get()
-    if out_block is None:
-        return
     # shift values and write to buffer
     # write to buffer
     out_buffer[:-block_shift] = out_buffer[block_shift:]
@@ -176,35 +202,38 @@ def callback(indata, outdata, frames, buftime, status):
         if dt > 8e-3:
             print("[warning] process time: {:.2f} ms".format(dt * 1000))
 
-def stage2(interpreter_2, _qi, _qo):
+
+def stage2(interpreter_2, q1, q2):
     input_details_2 = interpreter_2.get_input_details()
     est_idx = next(i for i in input_details_2 if i["name"] == "input_6")["index"]
     lpb_idx = next(i for i in input_details_2 if i["name"] == "input_7")["index"]
     states_idx = next(i for i in input_details_2 if i["name"] == "input_8")["index"]
     output_details_2 = interpreter_2.get_output_details()
     states_2 = np.zeros(input_details_2[states_idx]["shape"]).astype("float32")
+
+    block_len = 512
+    in_lpb, _shm1 = fetch_shm_ndarray('in_lpb', (1, 1, block_len))
+    est_block, _shm2 = fetch_shm_ndarray('est_block', (1, 1, block_len))
+    out_block, _shm3 = fetch_shm_ndarray('out_block', (block_len))
+
+    q2.put(0)   # ready, block for q1 to run first
+
     while True:
-        estimated_block, in_lpb = _qi.get()
-        if estimated_block is None:
-            _qo.put(None)
-            return
+        q2.put(2)   # wait stage1 calculate est_block
 
         # set tensors to the second block
-        interpreter_2.set_tensor(input_details_2[states_idx]["index"], states_2)
-        interpreter_2.set_tensor(input_details_2[est_idx]["index"], estimated_block)
         interpreter_2.set_tensor(input_details_2[lpb_idx]["index"], in_lpb)
+        interpreter_2.set_tensor(input_details_2[est_idx]["index"], est_block)
+        interpreter_2.set_tensor(input_details_2[states_idx]["index"], states_2)
+
+        q1.get()    # stage1 can continue
+
         # run calculation
         interpreter_2.invoke()
         # get output tensors
-        out_block = interpreter_2.get_tensor(output_details_2[0]["index"])
+        out_block[:] = interpreter_2.get_tensor(output_details_2[0]["index"])
         states_2 = interpreter_2.get_tensor(output_details_2[1]["index"])
 
-        _qo.put(out_block)
-
-
-p2 = Process(target=stage2, args=(interpreter_2, q1, q2))
-q2.put(None)    # bootstrap stage 1
-p2.start()
 
 def open_stream():
     with sd.Stream(device=(args.input_device, args.output_device),
@@ -217,11 +246,16 @@ def open_stream():
         if args.measure:
             while True:
                 time.sleep(1)
-                print('Processing time: {:.2f} ms'.format( 1000 * np.average(t_ring) ), end='\r')
+                print('Processing time: {:.2f} ms, std={:.2f}'.format( 
+                    1000 * np.average(t_ring), 1000 * np.std(t_ring) 
+                ), end='\r')
         else:
             threading.Event().wait()
 
+
 try:
+    p2 = Process(target=stage2, args=(interpreter_2, q1, q2))
+    p2.start()
     if args.daemonize:
         with daemon.DaemonContext():
             open_stream()
@@ -232,5 +266,8 @@ except KeyboardInterrupt:
 except Exception as e:
     raise
 finally:
+    for shm in shms:
+        shm.close()
+        shm.unlink()
     p2.terminate()
     p2.join()
