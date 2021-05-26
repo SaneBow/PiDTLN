@@ -13,6 +13,7 @@ Version: 23.05.2021
 This code is licensed under the terms of the MIT-license.
 """
 
+import soundfile as sf
 import sounddevice as sd
 import numpy as np
 import time
@@ -78,6 +79,7 @@ parser.add_argument("--latency", type=float, default=0.2, help="latency of sound
 parser.add_argument("--threads", type=int, default=1, help="set thread number for interpreters")
 parser.add_argument('--measure', action='store_true', help='measure and report processing time')
 parser.add_argument('--no-fftw', action='store_true', help='use np.fft instead of fftw')
+parser.add_argument('--save', '-s', action='store_true', help='save input and output audio files (wav)')
 parser.add_argument('-D', '--daemonize', action='store_true',help='run as a daemon')
 args = parser.parse_args(remaining)
 
@@ -118,6 +120,9 @@ if g_use_fftw:
     ifft_buf = pyfftw.empty_aligned(257, dtype='complex64')
     irfft = pyfftw.builders.irfft(ifft_buf)
 
+if args.save:
+    in_wav = sf.SoundFile('/tmp/aec_in.wav', 'w', 16000, 2)
+    out_wav = sf.SoundFile('/tmp/aec_out.wav', 'w', 16000, 1)
 
 t_ring = collections.deque(maxlen=512)
 
@@ -202,6 +207,10 @@ def callback(indata, outdata, frames, buftime, status):
         if dt > 8e-3:
             print("[warning] process time: {:.2f} ms".format(dt * 1000))
 
+    if args.save:
+        in_wav.write(indata) 
+        out_wav.write(outdata)
+
 
 def stage2(interpreter_2, q1, q2):
     input_details_2 = interpreter_2.get_input_details()
@@ -271,3 +280,8 @@ finally:
         shm.unlink()
     p2.terminate()
     p2.join()
+    if args.save:
+        in_wav.flush()
+        in_wav.close()
+        out_wav.flush()
+        out_wav.close()
