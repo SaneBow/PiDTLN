@@ -39,7 +39,7 @@ You need to have a sound card which supports hardware loopback, and the loopback
 
 ## Setup without Hardware Loopback
 
-When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. I made a [ALSA AEC plugin](configs/aec_asound.conf) that can achieve this. Copy the file to `/etc/alsa/alsa.conf/50-aec.conf`. Then you will have two additional alsa interfaces: `aec` and `aec_internal`. To use them, simply do:
+When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. I made a [ALSA AEC plugin](configs/aec_asound.conf) that can achieve this. Copy the file to `/etc/alsa/conf.d/50-aec.conf`. Then you will have two additional alsa interfaces: `aec` and `aec_internal`. To use them, simply do:
 1. Play some music to AEC virtual device: `aplay -D aec:cardname music.wav`
 2. Run AEC script with: `python3 aec.py -m 128 -i aec_internal:cardname -o aec_internal:cardname`.
 3. Record from AEC virtual device: `arecord -D aec:cardname -f S16_LE -r 16000 -c 1 -V mono rec.wav`
