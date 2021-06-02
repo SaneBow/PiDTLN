@@ -67,6 +67,7 @@ In my experience, it's better to use models < 5ms, otherwise you may see some "o
 * If `pyfftw` is installed, the script will use `pyfftw` instead of `np.fft`, which can gives a negligible ~0.2ms speedup. Note that in `aec_mp.py`, the processing time is capped by `interpreter2` inference time so fft processing time in the parallel process doesn't matter.
 * One huge benefit of DTLN AEC comparing to traditional AEC is that it's more robust. It can work even when the input has gone through other preprocessing stages like NS or another AEC. Also it can adapte to different delays so you may try it with bluetooth speaker.
 * The DTLN NS can also attenuate most of the background music the model is faster and more stable comparing to 128/256 AEC models. Sometimes I notice my voice is also attenuated by AEC models. So traditional (hardware) AEC + DTLN NS may work better in practice.
+* If your see strange alsa errors or a lot of xruns, try `sudo apt install libasound2-plugins` then add the line `defaults.pcm.rate_converter "samplerate"` in `/etc/asound.conf`.
 
 ## Acknowledgement
 * This project is heavily based on the [DTLN](https://github.com/breizhn/DTLN) and [DTLN-aec](https://github.com/breizhn/DTLN-aec) projects by [breizhn](https://github.com/breizhn).
