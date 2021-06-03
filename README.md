@@ -18,7 +18,7 @@ I add a few useful options in the `ns.py` based on the orginal script. See `--he
 
 ### Setup DTLN as a Service
   * Copy `ns.py` to `/usr/local/bin/ns` and `chmod +x`.
-  * Add the `dtln_ns.service` to `/etc/systemd/user/` and enable it with `systemctl --global enable dtln_ns`
+  * Add the [dtln_ns.service](resources/dtln_ns.service) to `/etc/systemd/user/` and enable it with `systemctl --global enable dtln_ns`
   * Reboot and record some audio from `hw:Loopback,1` to see if DTLN NS is running and taking effect.
 
 
@@ -39,15 +39,15 @@ You need to have a sound card which supports hardware loopback, and the loopback
 
 ## Setup without Hardware Loopback
 
-When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. I made a [ALSA AEC plugin](configs/aec_asound.conf) that can achieve this. Copy the file to `/etc/alsa/conf.d/50-aec.conf`. Then you will have two additional alsa interfaces: `aec` and `aec_internal`. To use them, simply do:
-1. Play some music to AEC virtual device: `aplay -D aec:cardname music.wav`
-2. Run AEC script with: `python3 aec.py -m 128 -i aec_internal:cardname -o aec_internal:cardname`.
-3. Record from AEC virtual device: `arecord -D aec:cardname -f S16_LE -r 16000 -c 1 -V mono rec.wav`
+When you don't have a soundcard that supports hardware loopback, you need to create a virtual input device whose last channel stores playback loopback. I made a [ALSA AEC plugin](https://github.com/sanebow/alsa-aec) that can achieve this. Refer to the instruction there to setup and configure, then you will have two additional alsa interfaces: `aec` and `aec_internal`. To use them, simply do:
+1. Play some music to AEC virtual device: `aplay -D aec music.wav`
+2. Run AEC script with: `python3 aec.py -m 128 -i aec_internal -o aec_internal`.
+3. Record from AEC virtual device: `arecord -D aec -f S16_LE -r 16000 -c 1 -V mono rec.wav`
 
 Now look at recorded audio file, music should be removed. 
 For testing, you may also use the `--save` option to save input audio to `/tmp/aec_in.wav` and AEC output to `/tmp/aec_out.wav` for inspection. Below is an sample input/output with my [ReSpeaker 2-Mics Pi HAT](https://wiki.seeedstudio.com/ReSpeaker_2_Mics_Pi_HAT/) (run with 256 model).
 
-![aec_2mic_hat](images/aec_2mic_hat.png)
+![aec_2mic_hat](resources/aec_2mic_hat.png)
 
 
 ## Performance
