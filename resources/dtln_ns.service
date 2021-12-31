@@ -7,4 +7,4 @@ Type=simple
 ExecStart=/usr/bin/ns -o 'Loopback 0' -D
 
 [Install]
-WantedBy=default.targe
+WantedBy=default.target
